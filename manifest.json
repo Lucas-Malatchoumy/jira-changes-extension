@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "Jira Description Diff",
+  "version": "1.0.0",
+  "description": "Affiche le diff des descriptions dans l'historique Jira",
+  "host_permissions": ["https://*.atlassian.net/*"],
+  "content_scripts": [
+    {
+      "matches": ["https://*.atlassian.net/browse/*", "https://*.atlassian.net/jira/*"],
+      "js": ["dist/content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
