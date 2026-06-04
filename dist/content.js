@@ -11,8 +11,6 @@
       const item = entry.items.find((i) => i.field === "description");
       return {
         id: entry.id,
-        created: entry.created,
-        author: entry.author.displayName,
         from: item.fromString ?? "",
         to: item.toString ?? ""
       };
@@ -592,6 +590,7 @@
 .jd-removed {
   background: #fee2e2;
   color: #b91c1c;
+  text-decoration: line-through;
   border-radius: 2px;
   padding: 0 1px;
 }
@@ -601,11 +600,35 @@
   border-radius: 2px;
   padding: 0 1px;
 }
+.jd-fold {
+  display: block;
+  color: #9ca3af;
+  font-style: italic;
+  margin: 2px 0;
+  user-select: none;
+}
 `;
+  var CONTEXT_WORDS = 8;
   var esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   var norm = (s) => s.replace(/\s+/g, " ").trim();
-  var renderFrom = (from, to) => computeDiff(from, to).filter((c) => !c.added).map((c) => c.removed ? `<span class="jd-removed">${esc(c.value)}</span>` : esc(c.value)).join("");
-  var renderTo = (from, to) => computeDiff(from, to).filter((c) => !c.removed).map((c) => c.added ? `<span class="jd-added">${esc(c.value)}</span>` : esc(c.value)).join("");
+  var collapse = (value, isFirst, isLast) => {
+    const tokens = value.split(/\s+/).filter(Boolean);
+    if (tokens.length <= CONTEXT_WORDS * 2) return esc(value);
+    const head = esc(tokens.slice(0, CONTEXT_WORDS).join(" "));
+    const tail = esc(tokens.slice(-CONTEXT_WORDS).join(" "));
+    const fold = '<span class="jd-fold">[\u2026]</span>';
+    if (isFirst) return `${fold} ${tail} `;
+    if (isLast) return ` ${head} ${fold}`;
+    return ` ${head} ${fold} ${tail} `;
+  };
+  var renderUnified = (from, to) => {
+    const parts = computeDiff(from, to);
+    return parts.map((c, i) => {
+      if (c.added) return `<span class="jd-added">${esc(c.value)}</span>`;
+      if (c.removed) return `<span class="jd-removed">${esc(c.value)}</span>`;
+      return collapse(c.value, i === 0, i === parts.length - 1);
+    }).join("");
+  };
   var injectStyles = () => {
     if (document.getElementById(STYLE_ID)) return;
     const style = document.createElement("style");
@@ -613,7 +636,7 @@
     style.textContent = STYLES;
     document.head.appendChild(style);
   };
-  var findHistoryRoot = () => document.querySelector('[data-testid="issue-activity-feed"]') ?? document.querySelector('[data-test-id="issue-activity-feed"]') ?? document.querySelector("#activity-section") ?? document.querySelector('[aria-label*="Activity"]') ?? document.body;
+  var findHistoryRoot = () => document.querySelector('[data-testid="issue-activity-feed.feed-display-with-intersection-observer"]') ?? document.querySelector('[data-testid^="issue-activity-feed.feed"]') ?? document.querySelector('[data-testid="issue-activity-feed"]') ?? document.querySelector('[data-test-id="issue-activity-feed"]') ?? document.querySelector("#activity-section") ?? document.querySelector('[aria-label*="Activity"]');
   var highlightChangesInDOM = (changes) => {
     const fromMap = /* @__PURE__ */ new Map();
     const toMap = /* @__PURE__ */ new Map();
@@ -624,6 +647,10 @@
       if (nt.length > 20) toMap.set(nt, change);
     }
     const root = findHistoryRoot();
+    if (!root) {
+      console.warn("[Jira Diff] activity feed not found, skipping (selectors may need updating)");
+      return;
+    }
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
     let node;
     while (node = walker.nextNode()) {
@@ -631,27 +658,28 @@
       if (node.children.length > 3) continue;
       const text = norm(node.textContent ?? "");
       if (text.length < 20) continue;
-      const fromChange = fromMap.get(text);
-      if (fromChange) {
-        node.setAttribute(PROCESSED_ATTR, "1");
-        node.innerHTML = renderFrom(fromChange.from, fromChange.to);
+      const change = fromMap.get(text) ?? toMap.get(text);
+      if (!change) continue;
+      node.setAttribute(PROCESSED_ATTR, "1");
+      if (renderedIds.has(change.id)) {
+        ;
+        node.style.display = "none";
         continue;
       }
-      const toChange = toMap.get(text);
-      if (toChange) {
-        node.setAttribute(PROCESSED_ATTR, "1");
-        node.innerHTML = renderTo(toChange.from, toChange.to);
-      }
+      renderedIds.add(change.id);
+      node.innerHTML = renderUnified(change.from, change.to);
     }
   };
   var getIssueKey = () => {
-    const browseMatch = window.location.pathname.match(/\/browse\/([A-Z]+-\d+)/);
+    const browseMatch = window.location.pathname.match(/\/browse\/([A-Z][A-Z0-9]+-\d+)/);
     if (browseMatch) return browseMatch[1];
     const params = new URLSearchParams(window.location.search);
     return params.get("selectedIssue") ?? params.get("issueKey");
   };
   var pendingChanges = [];
   var debounceTimer = null;
+  var highlightObserver = null;
+  var renderedIds = /* @__PURE__ */ new Set();
   var scheduleHighlight = () => {
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
@@ -661,13 +689,15 @@
   var init = async () => {
     const issueKey = getIssueKey();
     if (!issueKey) return;
+    renderedIds.clear();
     injectStyles();
     try {
       pendingChanges = await fetchDescriptionChanges(issueKey);
       if (pendingChanges.length === 0) return;
       highlightChangesInDOM(pendingChanges);
-      const observer = new MutationObserver(scheduleHighlight);
-      observer.observe(document.body, { childList: true, subtree: true });
+      highlightObserver?.disconnect();
+      highlightObserver = new MutationObserver(scheduleHighlight);
+      highlightObserver.observe(document.body, { childList: true, subtree: true });
     } catch (err) {
       console.error("[Jira Diff]", err);
     }
@@ -677,6 +707,7 @@
     if (window.location.href === lastUrl) return;
     lastUrl = window.location.href;
     pendingChanges = [];
+    renderedIds.clear();
     setTimeout(init, 1500);
   });
   navObserver.observe(document.body, { childList: true, subtree: true });
