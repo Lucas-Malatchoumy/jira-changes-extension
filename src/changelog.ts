@@ -15,8 +15,6 @@ export const fetchDescriptionChanges = async (issueKey: string): Promise<Descrip
       const item = entry.items.find(i => i.field === 'description')!
       return {
         id: entry.id,
-        created: entry.created,
-        author: entry.author.displayName,
         from: item.fromString ?? '',
         to: item.toString ?? '',
       }

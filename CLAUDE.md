@@ -40,8 +40,13 @@ Jira page loads
 `findHistoryRoot()` tries four selectors in order before falling back to `document.body`. If highlighting stops working after a Jira update, inspect the activity section and update this list in `content.ts`:
 
 ```
+[data-testid="issue-activity-feed.feed-display-with-intersection-observer"]
+[data-testid^="issue-activity-feed.feed"]
 [data-testid="issue-activity-feed"]
 [data-test-id="issue-activity-feed"]
 #activity-section
 [aria-label*="Activity"]
 ```
+
+To discover the current testid after a Jira update, run in the browser console:
+`[...new Set([...document.querySelectorAll('[data-testid*="activity" i]')].map(e=>e.getAttribute('data-testid')))]`
