@@ -1,20 +1,25 @@
 "use strict";
 (() => {
   // src/changelog.ts
+  var PAGE_SIZE = 100;
   var fetchDescriptionChanges = async (issueKey) => {
-    const res = await fetch(
-      `${window.location.origin}/rest/api/3/issue/${issueKey}/changelog?maxResults=100`
-    );
-    if (!res.ok) throw new Error(`Changelog fetch failed: ${res.status}`);
-    const data = await res.json();
-    return data.values.filter((entry) => entry.items.some((item) => item.field === "description")).map((entry) => {
-      const item = entry.items.find((i) => i.field === "description");
-      return {
-        id: entry.id,
-        from: item.fromString ?? "",
-        to: item.toString ?? ""
-      };
-    });
+    const changes = [];
+    let startAt = 0;
+    let isLast = false;
+    while (!isLast) {
+      const res = await fetch(
+        `${window.location.origin}/rest/api/3/issue/${issueKey}/changelog?startAt=${startAt}&maxResults=${PAGE_SIZE}`
+      );
+      if (!res.ok) throw new Error(`Changelog fetch failed: ${res.status}`);
+      const data = await res.json();
+      for (const entry of data.values) {
+        const item = entry.items.find((i) => i.field === "description");
+        if (item) changes.push({ id: entry.id, from: item.fromString ?? "", to: item.toString ?? "" });
+      }
+      isLast = data.isLast || data.values.length === 0;
+      startAt += data.values.length;
+    }
+    return changes;
   };
 
   // node_modules/diff/lib/index.mjs
@@ -609,8 +614,26 @@
 }
 `;
   var CONTEXT_WORDS = 8;
+  var MIN_TEXT_LEN = 20;
+  var PAIR_SEP = "\u241F";
+  var PREFIX_LEN = 100;
+  var HISTORY_ITEM_SELECTORS = [
+    '[data-testid="issue-history.ui.history-items.generic-history-item.history-item"]',
+    '[data-testid$="generic-history-item.history-item"]',
+    '[data-testid$="history-item.history-item"]'
+  ];
+  var HISTORY_ROOT_SELECTORS = [
+    '[data-testid="issue-activity-feed.feed-display-with-intersection-observer"]',
+    '[data-testid^="issue-activity-feed.feed"]',
+    '[data-testid="issue-activity-feed"]',
+    '[data-test-id="issue-activity-feed"]',
+    "#activity-section",
+    '[aria-label*="Activity"]'
+  ];
   var esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   var norm = (s) => s.replace(/\s+/g, " ").trim();
+  var pairKey = (from, to) => norm(from) + PAIR_SEP + norm(to);
+  var prefixKey = (from, to) => norm(from).slice(0, PREFIX_LEN) + PAIR_SEP + norm(to).slice(0, PREFIX_LEN);
   var collapse = (value, isFirst, isLast) => {
     const tokens = value.split(/\s+/).filter(Boolean);
     if (tokens.length <= CONTEXT_WORDS * 2) return esc(value);
@@ -636,38 +659,66 @@
     style.textContent = STYLES;
     document.head.appendChild(style);
   };
-  var findHistoryRoot = () => document.querySelector('[data-testid="issue-activity-feed.feed-display-with-intersection-observer"]') ?? document.querySelector('[data-testid^="issue-activity-feed.feed"]') ?? document.querySelector('[data-testid="issue-activity-feed"]') ?? document.querySelector('[data-test-id="issue-activity-feed"]') ?? document.querySelector("#activity-section") ?? document.querySelector('[aria-label*="Activity"]');
-  var highlightChangesInDOM = (changes) => {
-    const fromMap = /* @__PURE__ */ new Map();
-    const toMap = /* @__PURE__ */ new Map();
-    for (const change of changes) {
-      const nf = norm(change.from);
-      const nt = norm(change.to);
-      if (nf.length > 20) fromMap.set(nf, change);
-      if (nt.length > 20) toMap.set(nt, change);
+  var findHistoryRoot = () => HISTORY_ROOT_SELECTORS.map((s) => document.querySelector(s)).find(Boolean) ?? null;
+  var valueLeaves = (container) => Array.from(container.querySelectorAll("*")).filter(
+    (el) => el.children.length === 0 && norm(el.textContent ?? "").length >= MIN_TEXT_LEN
+  );
+  var toSingleColumn = (fromLeaf, toLeaf) => {
+    let common = fromLeaf;
+    while (common && !common.contains(toLeaf)) common = common.parentElement;
+    if (!common) return;
+    for (const block of Array.from(common.children)) {
+      if (!block.contains(fromLeaf)) {
+        block.style.display = "none";
+        continue;
+      }
+      block.style.setProperty("flex", "1 1 100%", "important");
+      block.style.setProperty("width", "100%", "important");
+      block.style.setProperty("max-width", "none", "important");
     }
+  };
+  var buildPairIndex = (changes) => {
+    const exact = /* @__PURE__ */ new Map();
+    const prefix = /* @__PURE__ */ new Map();
+    for (const c of changes) {
+      if (norm(c.from).length < MIN_TEXT_LEN || norm(c.to).length < MIN_TEXT_LEN) continue;
+      exact.set(pairKey(c.from, c.to), c);
+      const key = prefixKey(c.from, c.to);
+      prefix.set(key, prefix.has(key) ? null : c);
+    }
+    return { exact, prefix };
+  };
+  var renderInContainer = (container, index) => {
+    const leaves = valueLeaves(container);
+    for (let i = 0; i < leaves.length - 1; i++) {
+      const fromText = leaves[i].textContent ?? "";
+      const toText = leaves[i + 1].textContent ?? "";
+      const change = index.exact.get(pairKey(fromText, toText)) ?? index.prefix.get(prefixKey(fromText, toText));
+      if (!change) continue;
+      leaves[i].innerHTML = renderUnified(change.from, change.to);
+      toSingleColumn(leaves[i], leaves[i + 1]);
+      return change;
+    }
+    return null;
+  };
+  var highlightChangesInDOM = (changes) => {
+    const index = buildPairIndex(changes);
     const root = findHistoryRoot();
     if (!root) {
       console.warn("[Jira Diff] activity feed not found, skipping (selectors may need updating)");
       return;
     }
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
-    let node;
-    while (node = walker.nextNode()) {
-      if (node.getAttribute(PROCESSED_ATTR)) continue;
-      if (node.children.length > 3) continue;
-      const text = norm(node.textContent ?? "");
-      if (text.length < 20) continue;
-      const change = fromMap.get(text) ?? toMap.get(text);
-      if (!change) continue;
-      node.setAttribute(PROCESSED_ATTR, "1");
-      if (renderedIds.has(change.id)) {
-        ;
-        node.style.display = "none";
-        continue;
+    for (const container of Array.from(root.querySelectorAll(HISTORY_ITEM_SELECTORS.join(",")))) {
+      if (container.getAttribute(PROCESSED_ATTR)) continue;
+      const change = renderInContainer(container, index);
+      if (change) {
+        container.setAttribute(PROCESSED_ATTR, "1");
+        renderedIds.add(change.id);
       }
-      renderedIds.add(change.id);
-      node.innerHTML = renderUnified(change.from, change.to);
+    }
+    const missing = changes.length - renderedIds.size;
+    if (missing > 0) {
+      console.warn(`[Jira Diff] ${missing}/${changes.length} change(s) not matched in the DOM (history not fully rendered, or row markup changed)`);
     }
   };
   var getIssueKey = () => {
