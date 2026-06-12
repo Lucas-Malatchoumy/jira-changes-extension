@@ -4,6 +4,10 @@ Chrome extension that highlights word-level changes in Jira's issue description 
 
 Jira's built-in history only shows the old and new description side by side with no indication of what actually changed. This extension replaces each pair with a single unified diff: added words in green, removed words in red, unchanged text folded away.
 
+![Before / After](docs/preview.png)
+
+*(mock data — regenerate with `docs/mock.html`)*
+
 ## Installation
 
 ### From source (developer mode)

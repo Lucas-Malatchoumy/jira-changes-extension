@@ -1,0 +1,125 @@
+<!doctype html>
+<!-- Mock of a Jira history row used to generate docs/preview.png.
+     All content is invented — no real Jira data. -->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body {
+    margin: 0;
+    padding: 24px;
+    background: #fff;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    color: #172b4d;
+    font-size: 14px;
+    width: 852px;
+  }
+  .caption {
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #626f86;
+    margin: 0 0 8px;
+  }
+  .card {
+    border: 1px solid #dfe1e6;
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 28px;
+  }
+  .row-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: #6554c0;
+    color: #fff;
+    font-size: 12px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+  }
+  .row-header b { font-weight: 600; }
+  .row-header .when { color: #626f86; }
+  .field-label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    color: #626f86;
+    margin-bottom: 6px;
+  }
+  .columns {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .col {
+    flex: 1 1 0;
+    min-width: 0;
+    line-height: 1.5;
+    color: #44546f;
+  }
+  .arrow {
+    flex: none;
+    color: #626f86;
+    padding-top: 2px;
+  }
+  .unified { line-height: 1.6; color: #44546f; }
+  .jd-removed {
+    background: #fee2e2;
+    color: #b91c1c;
+    text-decoration: line-through;
+    border-radius: 2px;
+    padding: 0 1px;
+  }
+  .jd-added {
+    background: #dcfce7;
+    color: #15803d;
+    border-radius: 2px;
+    padding: 0 1px;
+  }
+  .jd-fold {
+    display: block;
+    color: #9ca3af;
+    font-style: italic;
+    margin: 2px 0;
+    user-select: none;
+  }
+</style>
+</head>
+<body>
+
+<p class="caption">Without the extension — spot the differences…</p>
+<div class="card">
+  <div class="row-header">
+    <div class="avatar">JD</div>
+    <span><b>Jane Doe</b> updated the <b>Description</b> <span class="when">· June 12, 2026 at 10:42 AM</span></span>
+  </div>
+  <div class="field-label">Description</div>
+  <div class="columns">
+    <div class="col">The cart page must display the list of items with their unit price. Shipping costs are calculated at checkout based on the carrier's flat rate. Out-of-stock items stay visible in the cart but cannot be selected for checkout, and a banner invites the user to remove them. Payment is handled by the legacy gateway and orders are confirmed by email within 24 hours.</div>
+    <div class="arrow">→</div>
+    <div class="col">The cart page must display the list of items with their unit price and applied discounts. Shipping costs are calculated at checkout based on the carrier's flat rate. Out-of-stock items stay visible in the cart but cannot be selected for checkout, and a banner invites the user to remove them. Payment is handled by the new PSP integration and orders are confirmed by email immediately after checkout.</div>
+  </div>
+</div>
+
+<p class="caption">With the extension</p>
+<div class="card">
+  <div class="row-header">
+    <div class="avatar">JD</div>
+    <span><b>Jane Doe</b> updated the <b>Description</b> <span class="when">· June 12, 2026 at 10:42 AM</span></span>
+  </div>
+  <div class="field-label">Description</div>
+  <div class="unified">The cart page must display the list of items with their unit price<span class="jd-added"> and applied discounts</span>. Shipping costs are calculated at checkout <span class="jd-fold">[…]</span> the user to remove them. Payment is handled by <span class="jd-removed">the legacy gateway</span><span class="jd-added">the new PSP integration</span> and orders are confirmed by email <span class="jd-removed">within 24 hours</span><span class="jd-added">immediately after checkout</span>.</div>
+</div>
+
+</body>
+</html>
