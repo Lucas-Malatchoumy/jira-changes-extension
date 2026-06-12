@@ -1,20 +1,25 @@
 "use strict";
 (() => {
   // src/changelog.ts
+  var PAGE_SIZE = 100;
   var fetchDescriptionChanges = async (issueKey) => {
-    const res = await fetch(
-      `${window.location.origin}/rest/api/3/issue/${issueKey}/changelog?maxResults=100`
-    );
-    if (!res.ok) throw new Error(`Changelog fetch failed: ${res.status}`);
-    const data = await res.json();
-    return data.values.filter((entry) => entry.items.some((item) => item.field === "description")).map((entry) => {
-      const item = entry.items.find((i) => i.field === "description");
-      return {
-        id: entry.id,
-        from: item.fromString ?? "",
-        to: item.toString ?? ""
-      };
-    });
+    const changes = [];
+    let startAt = 0;
+    let isLast = false;
+    while (!isLast) {
+      const res = await fetch(
+        `${window.location.origin}/rest/api/3/issue/${issueKey}/changelog?startAt=${startAt}&maxResults=${PAGE_SIZE}`
+      );
+      if (!res.ok) throw new Error(`Changelog fetch failed: ${res.status}`);
+      const data = await res.json();
+      for (const entry of data.values) {
+        const item = entry.items.find((i) => i.field === "description");
+        if (item) changes.push({ id: entry.id, from: item.fromString ?? "", to: item.toString ?? "" });
+      }
+      isLast = data.isLast || data.values.length === 0;
+      startAt += data.values.length;
+    }
+    return changes;
   };
 
   // node_modules/diff/lib/index.mjs
@@ -611,6 +616,7 @@
   var CONTEXT_WORDS = 8;
   var MIN_TEXT_LEN = 20;
   var PAIR_SEP = "\u241F";
+  var PREFIX_LEN = 100;
   var HISTORY_ITEM_SELECTORS = [
     '[data-testid="issue-history.ui.history-items.generic-history-item.history-item"]',
     '[data-testid$="generic-history-item.history-item"]',
@@ -627,6 +633,7 @@
   var esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   var norm = (s) => s.replace(/\s+/g, " ").trim();
   var pairKey = (from, to) => norm(from) + PAIR_SEP + norm(to);
+  var prefixKey = (from, to) => norm(from).slice(0, PREFIX_LEN) + PAIR_SEP + norm(to).slice(0, PREFIX_LEN);
   var collapse = (value, isFirst, isLast) => {
     const tokens = value.split(/\s+/).filter(Boolean);
     if (tokens.length <= CONTEXT_WORDS * 2) return esc(value);
@@ -670,10 +677,23 @@
       block.style.setProperty("max-width", "none", "important");
     }
   };
-  var renderInContainer = (container, byPair) => {
+  var buildPairIndex = (changes) => {
+    const exact = /* @__PURE__ */ new Map();
+    const prefix = /* @__PURE__ */ new Map();
+    for (const c of changes) {
+      if (norm(c.from).length < MIN_TEXT_LEN || norm(c.to).length < MIN_TEXT_LEN) continue;
+      exact.set(pairKey(c.from, c.to), c);
+      const key = prefixKey(c.from, c.to);
+      prefix.set(key, prefix.has(key) ? null : c);
+    }
+    return { exact, prefix };
+  };
+  var renderInContainer = (container, index) => {
     const leaves = valueLeaves(container);
     for (let i = 0; i < leaves.length - 1; i++) {
-      const change = byPair.get(pairKey(leaves[i].textContent ?? "", leaves[i + 1].textContent ?? ""));
+      const fromText = leaves[i].textContent ?? "";
+      const toText = leaves[i + 1].textContent ?? "";
+      const change = index.exact.get(pairKey(fromText, toText)) ?? index.prefix.get(prefixKey(fromText, toText));
       if (!change) continue;
       leaves[i].innerHTML = renderUnified(change.from, change.to);
       toSingleColumn(leaves[i], leaves[i + 1]);
@@ -682,9 +702,7 @@
     return null;
   };
   var highlightChangesInDOM = (changes) => {
-    const byPair = new Map(
-      changes.filter((c) => norm(c.from).length >= MIN_TEXT_LEN && norm(c.to).length >= MIN_TEXT_LEN).map((c) => [pairKey(c.from, c.to), c])
-    );
+    const index = buildPairIndex(changes);
     const root = findHistoryRoot();
     if (!root) {
       console.warn("[Jira Diff] activity feed not found, skipping (selectors may need updating)");
@@ -692,7 +710,7 @@
     }
     for (const container of Array.from(root.querySelectorAll(HISTORY_ITEM_SELECTORS.join(",")))) {
       if (container.getAttribute(PROCESSED_ATTR)) continue;
-      const change = renderInContainer(container, byPair);
+      const change = renderInContainer(container, index);
       if (change) {
         container.setAttribute(PROCESSED_ATTR, "1");
         renderedIds.add(change.id);

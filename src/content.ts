@@ -37,6 +37,10 @@ const MIN_TEXT_LEN = 20
 // Separator for the (from, to) pair key — never appears in rendered text
 const PAIR_SEP = '␟'
 
+// Prefix length for the fallback match, used when Jira truncates the
+// rendered text ("show more") so the full pair key can't match
+const PREFIX_LEN = 100
+
 // History rows in the activity feed (see CLAUDE.md if highlighting breaks)
 const HISTORY_ITEM_SELECTORS = [
   '[data-testid="issue-history.ui.history-items.generic-history-item.history-item"]',
@@ -62,6 +66,9 @@ const norm = (s: string): string => s.replace(/\s+/g, ' ').trim()
 
 const pairKey = (from: string, to: string): string =>
   norm(from) + PAIR_SEP + norm(to)
+
+const prefixKey = (from: string, to: string): string =>
+  norm(from).slice(0, PREFIX_LEN) + PAIR_SEP + norm(to).slice(0, PREFIX_LEN)
 
 // Folds an unchanged block of text: keeps only a few context words on each
 // side, the middle becomes a […] marker.
@@ -127,16 +134,38 @@ const toSingleColumn = (fromLeaf: HTMLElement, toLeaf: HTMLElement): void => {
   }
 }
 
+type PairIndex = {
+  exact: Map<string, DescriptionChange>
+  // null marks an ambiguous prefix (two changes share it) → never matched
+  prefix: Map<string, DescriptionChange | null>
+}
+
+// Keyed by the (from, to) pair: chained edits share boundary text, so a
+// per-side key attributes diffs to the wrong row (see CLAUDE.md). The prefix
+// index is a fallback for rows Jira truncates ("show more").
+const buildPairIndex = (changes: DescriptionChange[]): PairIndex => {
+  const exact = new Map<string, DescriptionChange>()
+  const prefix = new Map<string, DescriptionChange | null>()
+
+  for (const c of changes) {
+    if (norm(c.from).length < MIN_TEXT_LEN || norm(c.to).length < MIN_TEXT_LEN) continue
+    exact.set(pairKey(c.from, c.to), c)
+    const key = prefixKey(c.from, c.to)
+    prefix.set(key, prefix.has(key) ? null : c)
+  }
+
+  return { exact, prefix }
+}
+
 // Find the adjacent leaf pair matching a known change, render the unified
 // diff into the "from" leaf. Scanning adjacent pairs tolerates an extra
 // non-value leaf in the row (e.g. a label).
-const renderInContainer = (
-  container: Element,
-  byPair: Map<string, DescriptionChange>
-): DescriptionChange | null => {
+const renderInContainer = (container: Element, index: PairIndex): DescriptionChange | null => {
   const leaves = valueLeaves(container)
   for (let i = 0; i < leaves.length - 1; i++) {
-    const change = byPair.get(pairKey(leaves[i].textContent ?? '', leaves[i + 1].textContent ?? ''))
+    const fromText = leaves[i].textContent ?? ''
+    const toText = leaves[i + 1].textContent ?? ''
+    const change = index.exact.get(pairKey(fromText, toText)) ?? index.prefix.get(prefixKey(fromText, toText))
     if (!change) continue
     leaves[i].innerHTML = renderUnified(change.from, change.to)
     toSingleColumn(leaves[i], leaves[i + 1])
@@ -146,13 +175,7 @@ const renderInContainer = (
 }
 
 const highlightChangesInDOM = (changes: DescriptionChange[]): void => {
-  // Keyed by the (from, to) pair: chained edits share boundary text, so a
-  // per-side key attributes diffs to the wrong row (see CLAUDE.md).
-  const byPair = new Map(
-    changes
-      .filter(c => norm(c.from).length >= MIN_TEXT_LEN && norm(c.to).length >= MIN_TEXT_LEN)
-      .map(c => [pairKey(c.from, c.to), c] as const)
-  )
+  const index = buildPairIndex(changes)
 
   const root = findHistoryRoot()
   if (!root) {
@@ -162,7 +185,7 @@ const highlightChangesInDOM = (changes: DescriptionChange[]): void => {
 
   for (const container of Array.from(root.querySelectorAll(HISTORY_ITEM_SELECTORS.join(',')))) {
     if (container.getAttribute(PROCESSED_ATTR)) continue
-    const change = renderInContainer(container, byPair)
+    const change = renderInContainer(container, index)
     if (change) {
       container.setAttribute(PROCESSED_ATTR, '1')
       renderedIds.add(change.id)
